@@ -57,16 +57,24 @@
 <footer>Single-file roguelike • Kill enemies for XP & choose upgrades</footer>
 
 <script>
-// Full script with weapon stacking and continuous waves
+/*
+  Completed single-file prototype.
+  - Waves (first 10 preset, then random with scaling)
+  - Wave description bottom-of-screen classifies wave
+  - Pentadecagon enemy added (ranged turret that keeps distance)
+  - Easy-to-edit config sections near the top
+*/
 
+/* ---------------- CONFIG: tweak here ---------------- */
 const CONFIG = {
   canvas: { w: 1000, h: 600 },
   maxEnemies: 20,
   player: { maxHp: 10, speed: 180 },
   xpToLevel: lvl => 3 + lvl,
-  spawnDelayBetweenWaveEnemies: 220,
+  spawnDelayBetweenWaveEnemies: 220, // ms spawn within a wave
 };
 
+// Weapon templates (simplified but editable)
 const WEAPON_TEMPLATES = {
   rotating_orb: { id:'rotating_orb', name:'Rotating Orb', type:'orb', baseDamage:1, data:{count:1, speed:2.2}, desc:'Rotates around player dealing damage.'},
   buckshot:      { id:'buckshot', name:'Buckshot', type:'projectile', baseDamage:1, data:{bullets:5, spread:0.55, rate:1.2, speed:380}, desc:'Shoots cluster to nearest enemy.'},
@@ -77,6 +85,7 @@ const WEAPON_TEMPLATES = {
   ring:          { id:'ring', name:'Ring', type:'ring', baseDamage:1, data:{dirs:8, rate:0.6, speed:260}, desc:'Fires bullets in many directions.'}
 };
 
+// Upgrades per weapon (functions mutate weapon instance)
 const UPGRADE_OPTIONS = {
   rotating_orb:[
     {title:'Faster Rotation', apply:w=>w.data.speed*=1.6, desc:'Orbs rotate faster.'},
@@ -115,6 +124,7 @@ const UPGRADE_OPTIONS = {
   ],
 };
 
+// Enemy templates including the new pentadecagon ranged turret.
 const ENEMIES = {
   circle:      {shape:'circle', hp:3, speed:56, color:'#ff5a5a', immune:{}, xp:1},
   square:      {shape:'square', hp:9, speed:28, color:'#c93c3c', immune:{}, xp:3},
@@ -128,25 +138,30 @@ const ENEMIES = {
   pentadecagon:{shape:'pentadecagon', hp:8, speed:22, color:'#ff9ad1', immune:{}, xp:4, ranged:true, damage:3, rate:0.6}
 };
 
-// Preset waves remain unchanged
+/* ---------------- Waves: first 10 preset, then random ----------------
+   Each wave is an array of enemy 'templateName' strings or special objects
+*/
 const PRESET_WAVES = [
-  ['circle','circle','circle','circle','circle'],
-  Array(10).fill('circle').concat(['square']),
-  Array(5).fill('square'),
-  Array(10).fill('square').concat(Array(3).fill('triangle')),
-  Array(5).fill('triangle').concat(Array(3).fill('pentagon')),
-  Array(15).fill('circle').concat(Array(10).fill('square')).concat(Array(5).fill('triangle')),
-  Array(5).fill('pentagon'),
-  Array(10).fill('pentagon').concat(Array(3).fill('heptagon')).concat(['hexagon']),
-  Array(25).fill('circle').concat(Array(5).fill('octagon')).concat(Array(10).fill('square')),
-  ['circle','square','triangle','heavy']
+  // wave index starting at 1
+  ['circle','circle','circle','circle','circle'],                                   // 1
+  Array(10).fill('circle').concat(['square']),                                     // 2
+  Array(5).fill('square'),                                                         // 3
+  Array(10).fill('square').concat(Array(3).fill('triangle')),                      // 4
+  Array(5).fill('triangle').concat(Array(3).fill('pentagon')),                     // 5
+  Array(15).fill('circle').concat(Array(10).fill('square')).concat(Array(5).fill('triangle')), // 6
+  Array(5).fill('pentagon'),                                                       // 7
+  Array(10).fill('pentagon').concat(Array(3).fill('heptagon')).concat(['hexagon']),// 8
+  Array(25).fill('circle').concat(Array(5).fill('octagon')).concat(Array(10).fill('square')), // 9
+  ['circle','square','triangle','heavy']                                           // 10 (hendecagon~heavy)
 ];
 
-// Wave classification function unchanged
+// Wave description helper - classify wave for bottom text
 function classifyWave(enemyList){
+  // simple heuristics
   const counts = {};
   enemyList.forEach(n => counts[n] = (counts[n]||0)+1);
   const total = enemyList.length;
+  // meatshield: lots of squares/circles and slow types
   const meatshieldScore = (counts['square']||0) + (counts['circle']||0) + (counts['heavy']||0);
   const spamScore = (counts['triangle']||0) + (counts['circle']||0);
   const rangedScore = (counts['pentadecagon']||0) + (counts['pentagon']||0) + (counts['hexagon']||0);
@@ -157,7 +172,7 @@ function classifyWave(enemyList){
   return 'Normal wave';
 }
 
-// ---------------- Engine state
+/* ---------------- Engine state ---------------- */
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 canvas.width = CONFIG.canvas.w;
@@ -166,12 +181,12 @@ canvas.height = CONFIG.canvas.h;
 let keys = {};
 let lastTime = performance.now();
 let enemies = [];
-let bullets = [];
-let enemyBullets = [];
-let orbs = [];
+let bullets = [];      // friendly projectiles
+let enemyBullets = []; // enemy projectiles
+let orbs = [];         // rotating orbs maintained per weapon instance
 let minions = [];
 let effects = [];
-let spawnQueue = [];
+let spawnQueue = [];   // pending enemies to spawn for current wave (names)
 let wave = 1;
 let waveInProgress = false;
 let waveSpawnIndex = 0;
@@ -179,7 +194,7 @@ let waveEnemySpawnTimer = 0;
 let gamePaused = false;
 let cardOverlay = null;
 
-// Player object
+// Player
 let player = {
   x: canvas.width/2, y: canvas.height/2,
   hp: CONFIG.player.maxHp, maxHp: CONFIG.player.maxHp,
@@ -187,14 +202,14 @@ let player = {
   ownedWeapons:{}, currentWeaponId:null
 };
 
-// Utils
+// utils
 const rand = (a,b)=> a + Math.random()*(b-a);
 const choose = arr => arr[Math.floor(Math.random()*arr.length)];
 const dist = (x1,y1,x2,y2)=> Math.hypot(x1-x2,y1-y2);
 const clamp = (v,a,b)=> Math.max(a, Math.min(b, v));
 const now = ()=> performance.now();
 
-// Weapon instance factory
+// create weapon instance
 function createWeaponInstance(id){
   const t = WEAPON_TEMPLATES[id];
   if(!t) return null;
@@ -206,78 +221,616 @@ function createWeaponInstance(id){
   };
 }
 
-// Initialize first weapon
+// initial random weapon
 (function initWeapon(){
   const keys = Object.keys(WEAPON_TEMPLATES);
-  const pick = choose(keys);
+  const pick = keys[Math.floor(Math.random()*keys.length)];
   player.ownedWeapons[pick] = createWeaponInstance(pick);
   player.currentWeaponId = pick;
 })();
 
-// --- Input ---
-window.addEventListener('keydown', e=> { keys[e.key.toLowerCase()] = true; if(e.key===' '){e.preventDefault();}});
+/* ---------------- Input ---------------- */
+window.addEventListener('keydown', e=> { keys[e.key.toLowerCase()] = true; if(e.key === ' '){ e.preventDefault(); }});
 window.addEventListener('keyup', e=> { keys[e.key.toLowerCase()] = false; });
 
-// --- Enemy spawn ---
-function spawnEnemyByName(name, extra = {}) {
+/* ---------------- Spawn helpers ---------------- */
+function spawnEnemyByName(name, extra){
   const template = ENEMIES[name] || ENEMIES.circle;
-  const side = Math.floor(Math.random() * 4);
-  let x, y;
-  if(side===0){ x=-30; y=rand(30, canvas.height-30);}
-  else if(side===1){ x=canvas.width+30; y=rand(30, canvas.height-30);}
-  else if(side===2){ y=-30; x=rand(30, canvas.width-30);}
-  else { y=canvas.height+30; x=rand(30, canvas.width-30);}
-  const immune = structuredClone(template.immune||{});
-  const sidesMap = {circle:0, square:4, triangle:3, pentagon:5, hexagon:6, heptagon:7, octagon:8, hendecagon:11, ennea:91, pentadecagon:15};
-  const sides = sidesMap[template.shape] || 0;
+  // spawn around edges
+  const side = Math.floor(Math.random()*4);
+  let x,y;
+  if(side===0){ x = -30; y = rand(30, canvas.height-30);}
+  else if(side===1){ x = canvas.width+30; y = rand(30, canvas.height-30);}
+  else if(side===2){ y = -30; x = rand(30, canvas.width-30);}
+  else { y = canvas.height+30; x = rand(30, canvas.width-30);}
   const e = {
-    id: "e_" + Math.random().toString(36).slice(2),
-    name,
-    templateName: name,
-    shape: template.shape,
-    sides,
-    x, y,
-    hp: template.hp,
-    maxHp: template.hp,
-    speed: template.speed,
-    color: template.color,
-    size: extra.size||14,
-    immune,
-    xp: template.xp||1,
-    ranged: template.ranged||false,
-    damage: template.damage||1,
-    rate: template.rate||0.8,
+    id: 'e_'+Math.random().toString(36).slice(2),
+    name, templateName: name, shape: template.shape,
+    hp: template.hp, maxHp: template.hp,
+    speed: template.speed, color: template.color,
+    size: 10 + template.hp/5,
+    immune: template.immune || {},
+    xp: template.xp || 1,
+    ranged: template.ranged || false,
+    damage: template.damage || 1,
+    rate: template.rate || 0.8,
     lastShot: 0,
-    aiKeepDist: !!template.ranged,
+    // behaviors
+    aiKeepDist: !!template.ranged, // pentadecagon keeps distance and shoots
     target: null
   };
   enemies.push(e);
-  return e;
 }
 
-// --- Wave preparation ---
+/* ---------------- Wave system ---------------- */
 function prepareWave(n){
   wave = n;
-  enemies.length=0; bullets.length=0; enemyBullets.length=0; orbs.length=0; minions.length=0;
-  spawnQueue.length=0; waveInProgress=true; waveSpawnIndex=0; waveEnemySpawnTimer=0;
-  if(n <= PRESET_WAVES.length) spawnQueue.push(...PRESET_WAVES[n-1]);
-  else {
+  enemies.length = 0;
+  bullets.length = 0;
+  enemyBullets.length = 0;
+  orbs.length = 0;
+  minions.length = 0;
+  spawnQueue.length = 0;
+  waveInProgress = true;
+  waveSpawnIndex = 0;
+  waveEnemySpawnTimer = 0;
+  // fill spawnQueue from preset or random
+  if(n <= PRESET_WAVES.length){
+    spawnQueue.push(...PRESET_WAVES[n-1]);
+  } else {
+    // random generation biased by wave (harder shapes at higher waves)
     const count = Math.min(30, 4 + Math.floor(n*1.3));
     const pool = [];
+    // lower waves: more circles/triangles; higher waves: include heavy & boss rarely
     for(let i=0;i<count;i++){
-      const r=Math.random();
-      if(n<6) pool.push(Math.random()<0.65?'circle':(Math.random()<0.5?'triangle':'square'));
-      else if(n<10) pool.push(Math.random()<0.5?'square':(Math.random()<0.55?'circle':'pentagon'));
-      else {
-        const pick=Math.random();
-        if(pick<0.12) pool.push('heavy');
-        else if(pick<0.22) pool.push('heptagon');
-        else if(pick<0.35) pool.push('pentadecagon');
-        else if(pick<0.6) pool.push('square');
+      const r = Math.random();
+      if(n < 6){
+        pool.push(Math.random() < 0.65 ? 'circle' : (Math.random()<0.5 ? 'triangle' : 'square'));
+      } else if(n < 10){
+        pool.push(Math.random()<0.5 ? 'square' : (Math.random()<0.55 ? 'circle' : 'pentagon'));
+      } else {
+        // higher waves: include heavy-ish types more often
+        const pick = Math.random();
+        if(pick < 0.12) pool.push('heavy');
+        else if(pick < 0.22) pool.push('heptagon');
+        else if(pick < 0.35) pool.push('pentadecagon');
+        else if(pick < 0.6) pool.push('square');
         else pool.push('circle');
       }
     }
     spawnQueue.push(...pool);
   }
+  // set wave description text
   const desc = classifyWave(spawnQueue);
-  document.getElementById
+  document.getElementById('waveDesc').innerText = `Wave ${n} - ${desc}`;
+  // start spawning sequence (spawnQueue will be fed into spawn every N ms)
+}
+
+// start first wave
+prepareWave(1);
+
+/* ---------------- Weapon fire handlers ---------------- */
+function ensureOrbs(w){
+  // ensure orbs[] contains orbs that belong to player weapon id
+  const existing = orbs.filter(o => o.owner === w.id);
+  while(existing.length < (w.data.count||1)){
+    const orb = { owner: w.id, angle: Math.random()*Math.PI*2, dist: 34 + (w.data.count*6), r:8, damage: w.baseDamage };
+    orbs.push(orb);
+    existing.push(orb);
+  }
+}
+
+function fireProjectiles(w, overrideAngle){
+  // buckshot & rocket & ring
+  if(w.id === 'buckshot'){
+    const target = findClosestEnemy(player.x, player.y);
+    let base = target ? Math.atan2(target.y - player.y, target.x - player.x) : overrideAngle || rand(0,Math.PI*2);
+    const bulletsCount = w.data.bullets || 5;
+    const spread = w.data.spread || 0.6;
+    for(let i=0;i<bulletsCount;i++){
+      const a = base + (i - (bulletsCount-1)/2) * (spread / bulletsCount);
+      bullets.push({x:player.x, y:player.y, vx: Math.cos(a)*(w.data.speed||360), vy: Math.sin(a)*(w.data.speed||360), damage: w.baseDamage || 1, life: 1500, owner:'player'});
+    }
+  } else if(w.id === 'rocket'){
+    const target = findClosestEnemy(player.x, player.y);
+    let a = target ? Math.atan2(target.y - player.y, target.x - player.x) : overrideAngle || rand(0,Math.PI*2);
+    bullets.push({x:player.x, y:player.y, vx: Math.cos(a)*(w.data.speed||220), vy: Math.sin(a)*(w.data.speed||220), damage: w.baseDamage || 3, life: 3000, owner:'player', splash: w.data.splash || 28, splashDamage: w.data.splashDamage || 2});
+  } else {
+    // general projectile (ring)
+    const spd = w.data.speed || 260;
+    const dirs = w.data.dirs || 8;
+    for(let i=0;i<dirs;i++){
+      const a = (i/dirs)*Math.PI*2;
+      bullets.push({x:player.x, y:player.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd, damage: w.baseDamage || 1, life: 1200, owner:'player'});
+    }
+  }
+}
+
+function fireChain(w){
+  // very simplified chain: instant zap to nearest enemy within range (apply damage)
+  const target = findClosestEnemy(player.x, player.y);
+  if(target && dist(player.x,player.y,target.x,target.y) < (w.data.range||120)){
+    // create damage effect (we handle enemy damage in update loop by consuming a hit marker)
+    target.hp -= w.baseDamage || 1;
+    spawnEffect(target.x, target.y, 'zap');
+    if(target.hp <= 0) enemyDie(target);
+    // chain to more nearby enemies
+    let chained = 0;
+    for(const e of enemies){
+      if(e === target) continue;
+      if(dist(target.x,target.y,e.x,e.y) < 80 && chained < (w.data.chains-1)){
+        e.hp -= w.baseDamage || 1;
+        spawnEffect(e.x,e.y,'zap');
+        if(e.hp <= 0) enemyDie(e);
+        chained++;
+      }
+    }
+  }
+}
+
+function fireScythe(w){
+  // throw a projectile that pierces and applies poison
+  const target = findClosestEnemy(player.x, player.y);
+  const a = target ? Math.atan2(target.y-player.y, target.x-player.x) : rand(0,Math.PI*2);
+  bullets.push({x:player.x, y:player.y, vx: Math.cos(a)*480, vy: Math.sin(a)*480, damage: w.baseDamage || 0, life: 1600, owner:'player', pierce:true, poison: w.data.poison, poisonTime: w.data.lifetime});
+}
+
+function spawnMinionFromPlayer(w){
+  // spawn small minion that targets enemies
+  const t = { x: player.x + rand(-12,12), y: player.y + rand(-12,12), vx:0, vy:0, hp: 4, maxHp:4, damage: w.baseDamage || 1, owner:'player', ttl: 14000, type: w.minionType || 'base' };
+  minions.push(t);
+}
+
+/* ---------------- AI / update ---------------- */
+function findClosestEnemy(x,y){
+  if(enemies.length===0) return null;
+  let best=null, bestd=1e9;
+  for(const e of enemies){
+    const d = dist(x,y,e.x,e.y);
+    if(d < bestd){ bestd = d; best = e; }
+  }
+  return best;
+}
+
+function enemyDie(e){
+  try { // safe removal
+    player.xp += e.xp || 1;
+    player.kills++;
+    const idx = enemies.indexOf(e); if(idx>=0) enemies.splice(idx,1);
+  } catch(err){}
+  // check level up
+  while(player.xp >= CONFIG.xpToLevel(player.level)){
+    player.xp -= CONFIG.xpToLevel(player.level);
+    player.level++;
+    // show level-up card (choose 3 random cards - weapon or upgrade only for owned weapons)
+    presentCardsForLevel();
+    // pause further immediate progress
+    break;
+  }
+}
+
+function spawnEffect(x,y,type){
+  effects.push({x,y,type, life: 400, t:0});
+}
+
+/* ---------------- Wave spawn ticking ---------------- */
+function updateWaveSpawning(dt){
+  if(!waveInProgress) return;
+  if(spawnQueue.length === 0 && enemies.length === 0 && enemyBullets.length === 0 && minions.length === 0){
+    // wave cleared -> prepare next
+    waveInProgress = false;
+    setTimeout(()=> prepareWave(wave+1), 700);
+    return;
+  }
+  // spawn from spawnQueue gradually
+  if(spawnQueue.length > 0){
+    waveEnemySpawnTimer -= dt;
+    if(waveEnemySpawnTimer <= 0){
+      const name = spawnQueue.shift();
+      if(name) spawnEnemyByName(name);
+      waveEnemySpawnTimer = CONFIG.spawnDelayBetweenWaveEnemies;
+    }
+  }
+}
+
+/* ---------------- Update loop ---------------- */
+function update(dt){
+  if(gamePaused) return;
+  // player movement
+  let mx = 0, my = 0;
+  if(keys['w'] || keys['arrowup']) my -=1;
+  if(keys['s'] || keys['arrowdown']) my +=1;
+  if(keys['a'] || keys['arrowleft']) mx -=1;
+  if(keys['d'] || keys['arrowright']) mx +=1;
+  const mlen = Math.hypot(mx,my) || 1;
+  player.x += (mx/mlen) * player.speed * dt/1000;
+  player.y += (my/mlen) * player.speed * dt/1000;
+  player.x = clamp(player.x, 8, canvas.width-8);
+  player.y = clamp(player.y, 8, canvas.height-8);
+
+  // weapon auto-fire (simple: player always fires)
+  const weapon = player.ownedWeapons[player.currentWeaponId];
+  if(weapon){
+    const t = now();
+    const elapsed = (t - (weapon.lastShot||0))/1000;
+    const rate = (weapon.data && weapon.data.rate) || 1.0;
+    if(elapsed >= (1/rate)){
+      weapon.lastShot = t;
+      // dispatch type
+      if(weapon.type === 'projectile') fireProjectiles(weapon);
+      else if(weapon.type === 'orb') ensureOrbs(weapon); // orbs are handled in draw & collision
+      else if(weapon.type === 'chain') fireChain(weapon);
+      else if(weapon.type === 'scythe') fireScythe(weapon);
+      else if(weapon.type === 'minions') spawnMinionFromPlayer(weapon);
+      else if(weapon.type === 'ring') fireProjectiles(weapon);
+    }
+  }
+
+  // update bullets (friendly)
+  for(let i = bullets.length-1; i>=0; i--){
+    const b = bullets[i];
+    b.x += b.vx * dt/1000;
+    b.y += b.vy * dt/1000;
+    b.life -= dt;
+    // check collisions with enemies
+    for(let j=enemies.length-1;j>=0;j--){
+      const e = enemies[j];
+      if(dist(b.x,b.y,e.x,e.y) < e.size + 4){
+        // hit
+        e.hp -= b.damage || 1;
+        spawnEffect(b.x,b.y,'hit');
+        if(b.pierce !== true){ bullets.splice(i,1); break; }
+        // else piercing bullets continue
+      }
+    }
+    if(b && b.life <= 0) bullets.splice(i,1);
+  }
+
+  // update enemy bullets
+  for(let i = enemyBullets.length-1;i>=0;i--){
+    const b = enemyBullets[i];
+    b.x += b.vx * dt/1000;
+    b.y += b.vy * dt/1000;
+    b.life -= dt;
+    if(dist(b.x,b.y,player.x,player.y) < 10 + (b.radius||4)){
+      player.hp -= b.damage || 1;
+      spawnEffect(player.x, player.y, 'playerhit');
+      enemyBullets.splice(i,1);
+      continue;
+    }
+    if(b.life <= 0) enemyBullets.splice(i,1);
+  }
+
+  // update enemies AI and movement
+  for(let i = enemies.length-1;i>=0;i--){
+    const e = enemies[i];
+    if(e.aiKeepDist){
+      // pentadecagon behavior: maintain a distance from player and shoot slowly
+      const desiredDist = 160;
+      const dx = player.x - e.x, dy = player.y - e.y;
+      const d = Math.hypot(dx,dy);
+      // if too close, move away, if too far, move slightly towards
+      let nx=0, ny=0;
+      if(d < desiredDist-20){ nx = -dx/d; ny = -dy/d; }
+      else if(d > desiredDist+40){ nx = dx/d; ny = dy/d; }
+      e.x += nx * e.speed * dt/1000;
+      e.y += ny * e.speed * dt/1000;
+      // shooting
+      e.lastShot += dt;
+      if(e.lastShot > (1000 / (e.rate||0.6))){
+        e.lastShot = 0;
+        // shoot towards player: create enemy projectile
+        const a = Math.atan2(player.y - e.y, player.x - e.x);
+        const spd = 260;
+        enemyBullets.push({x:e.x, y:e.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd, damage: e.damage||3, life: 3000, owner:'enemy', radius:6});
+      }
+    } else {
+      // basic seek player
+      const dx = player.x - e.x, dy = player.y - e.y;
+      const d = Math.hypot(dx,dy) || 1;
+      e.x += (dx/d) * e.speed * dt/1000;
+      e.y += (dy/d) * e.speed * dt/1000;
+    }
+    // apply poison if any
+    if(e.poison && e.poison > 0){
+      // simple poison tick
+      e.hp -= (e.poison * dt/1000) * 0.5;
+    }
+    // check collision with player (enemy touches player deals damage)
+    if(dist(e.x,e.y,player.x,player.y) < e.size + 10){
+      player.hp -= 0.6 * dt/1000; // continuous damage while in contact
+    }
+    // remove if dead
+    if(e.hp <= 0){
+      enemyDie(e);
+    }
+  }
+
+  // orbs rotation around player (for rotating_orb weapon)
+  for(const o of orbs){
+    o.angle += (o.owner && player.ownedWeapons[o.owner] ? player.ownedWeapons[o.owner].data.speed : 2.5) * dt/1000;
+    o.x = player.x + Math.cos(o.angle) * (o.dist || 40);
+    o.y = player.y + Math.sin(o.angle) * (o.dist || 40);
+    // check collisions vs enemies
+    for(let j=enemies.length-1;j>=0;j--){
+      const e = enemies[j];
+      if(dist(o.x,o.y,e.x,e.y) < e.size + o.r){
+        e.hp -= (player.ownedWeapons[o.owner] ? player.ownedWeapons[o.owner].baseDamage : 1) * dt/1000 * 60 / 4; // scaled per tick
+        spawnEffect(e.x,e.y,'hit');
+        if(e.hp <= 0) enemyDie(e);
+      }
+    }
+  }
+
+  // minions movement & attacks
+  for(let i=minions.length-1;i>=0;i--){
+    const m = minions[i];
+    m.ttl -= dt;
+    const target = findClosestEnemy(m.x,m.y);
+    if(target){
+      const dx = target.x - m.x, dy = target.y - m.y;
+      const d = Math.hypot(dx,dy) || 1;
+      m.x += (dx/d) * 80 * dt/1000;
+      m.y += (dy/d) * 80 * dt/1000;
+      if(dist(m.x,m.y,target.x,target.y) < 10){
+        target.hp -= m.damage * dt/1000 * 30;
+        if(target.hp <= 0) enemyDie(target);
+      }
+    } else {
+      // idle near player
+      m.x += (player.x - m.x) * 0.06;
+      m.y += (player.y - m.y) * 0.06;
+    }
+    if(m.ttl <= 0) minions.splice(i,1);
+  }
+
+  // effects lifetime
+  for(let i=effects.length-1;i>=0;i--){
+    const ef = effects[i]; ef.t += dt; ef.life -= dt; if(ef.life <= 0) effects.splice(i,1);
+  }
+
+  // cp: enemy bullets handled earlier
+
+  // spawn queue and wave spawning
+  updateWaveSpawning(dt);
+
+  // check death
+  if(player.hp <= 0){
+    // reset game (very simple)
+    alert('You died! Restarting run.');
+    location.reload();
+  }
+
+  // UI updates
+  document.getElementById('hpfill').style.width = `${(player.hp/player.maxHp)*100}%`;
+  document.getElementById('ui-text').innerText = `XP: ${Math.floor(player.xp)} | Level: ${player.level} | Weapon: ${player.currentWeaponId}`;
+  document.getElementById('bottomstats').innerText = `Wave: ${wave} | Enemies: ${enemies.length} Bullets: ${bullets.length + enemyBullets.length} XP:${Math.floor(player.xp)}/${CONFIG.xpToLevel(player.level)}`;
+}
+
+/* ---------------- Present Level-up Cards ----------------
+   Pause the game, present 3 cards, each either a new weapon or an upgrade for an owned weapon.
+   Upgrades that require owning a weapon will not be shown unless owned.
+*/
+function presentCardsForLevel(){
+  gamePaused = true;
+  // build card options
+  const availableWeaponIds = Object.keys(WEAPON_TEMPLATES);
+  const owned = Object.keys(player.ownedWeapons);
+  // gather candidate cards
+  const cards = [];
+  // include one new weapon option and two upgrades (if possible)
+  // New weapon:
+  const notOwned = availableWeaponIds.filter(id => !owned.includes(id));
+  if(notOwned.length > 0){
+    const pick = choose(notOwned);
+    const wt = WEAPON_TEMPLATES[pick];
+    cards.push({type:'weapon', id:pick, title: wt.name, desc: wt.desc});
+  }
+  // then fill up to 3 choices with upgrades or weapons
+  while(cards.length < 3){
+    if(Math.random() < 0.55 && owned.length > 0){
+      // pick an owned weapon and pick a random upgrade for it
+      const wId = choose(owned);
+      const ups = UPGRADE_OPTIONS[wId] || [];
+      if(ups.length > 0){
+        const up = choose(ups);
+        // ensure we don't duplicate same exact title already in cards for same weapon
+        if(!cards.find(c=>c.type==='upgrade' && c.weapon===wId && c.title===up.title)){
+          cards.push({type:'upgrade', weapon:wId, apply: up.apply, title:`${player.ownedWeapons[wId].name}: ${up.title}`, desc: up.desc, upgradeRef: up});
+        } else continue;
+      } else {
+        // fallback to offering new weapon if exists
+        if(notOwned.length>0) cards.push({type:'weapon', id: choose(notOwned), title:'New Weapon', desc:'A new weapon.'});
+        else break;
+      }
+    } else {
+      // offer new weapon if any
+      if(notOwned.length>0) cards.push({type:'weapon', id: choose(notOwned), title: WEAPON_TEMPLATES[choose(notOwned)]?.name || 'Weapon', desc: 'New weapon.'});
+      else if(owned.length>0){
+        // offer random upgrade for owned
+        const wId = choose(owned); const ups = UPGRADE_OPTIONS[wId] || [];
+        if(ups.length>0) cards.push({type:'upgrade', weapon:wId, apply: choose(ups).apply, title:`${player.ownedWeapons[wId].name}: Upgrade`, desc:'Upgrade.'});
+        else break;
+      } else break;
+    }
+  }
+  // ensure exactly 3 cards (duplicate near-miss choices allowed)
+  while(cards.length < 3) cards.push({type:'weapon', id: choose(Object.keys(WEAPON_TEMPLATES)), title:'Bonus', desc:'Small bonus.'});
+
+  // build overlay DOM
+  const overlay = document.createElement('div'); overlay.className = 'overlay';
+  const panel = document.createElement('div'); panel.className = 'card-panel';
+  cards.forEach((c, idx) => {
+    const card = document.createElement('div'); card.className='card';
+    const title = document.createElement('div'); title.className='title'; title.innerText = c.title;
+    const desc = document.createElement('div'); desc.className='desc'; desc.innerText = c.desc;
+    card.appendChild(title); card.appendChild(desc);
+    card.onclick = () => {
+      // apply choice
+if(c.type === 'weapon'){
+    // give player a weapon instance only if not already owned
+    if(!player.ownedWeapons[c.id]){
+        player.ownedWeapons[c.id] = createWeaponInstance(c.id);
+    }
+    // auto equip the newly picked weapon
+    player.currentWeaponId = c.id;
+} else if(c.type === 'upgrade'){
+        // apply to player's weapon instance
+        const inst = player.ownedWeapons[c.weapon];
+        if(inst && c.apply) c.apply(inst);
+      }
+      // remove overlay and resume
+      document.body.removeChild(overlay);
+      gamePaused = false;
+    };
+    panel.appendChild(card);
+  });
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+}
+
+/* ---------------- Draw ---------------- */
+function draw(){
+  // clear
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // draw grid-ish (subtle)
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // draw enemies
+  for(const e of enemies){
+    // shape rendering thumbnail (we'll approximate shapes with circles/squares/triangles)
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    // health bar
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    ctx.fillRect(-e.size-1, -e.size-10, (e.size*2)+2, 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fillRect(-e.size-1, -e.size-10, (e.size*2)+2, 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.0)';
+    // hp fill
+    const frac = clamp(e.hp/e.maxHp,0,1);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(-e.size, -e.size-10, (e.size*2)*frac, 6);
+    // shape
+    ctx.beginPath();
+    ctx.fillStyle = e.color || '#ff5a5a';
+    if(e.shape === 'square'){
+      ctx.fillRect(-e.size, -e.size, e.size*2, e.size*2);
+    } else if(e.shape === 'triangle'){
+      ctx.moveTo(0, -e.size);
+      ctx.lineTo(e.size, e.size);
+      ctx.lineTo(-e.size, e.size);
+      ctx.closePath(); ctx.fill();
+    } else {
+      // circle & other shapes fallback to circle
+      ctx.arc(0,0,e.size,0,Math.PI*2); ctx.fill();
+    }
+    // outline
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.stroke();
+    ctx.restore();
+  }
+
+  // draw bullets (friendly)
+  for(const b of bullets){
+    ctx.beginPath();
+    ctx.fillStyle = '#58aaff';
+    ctx.arc(b.x, b.y, 4,0,Math.PI*2); ctx.fill();
+  }
+  // enemy bullets
+  for(const b of enemyBullets){
+    ctx.beginPath();
+    ctx.fillStyle = '#ff8b8b';
+    ctx.arc(b.x, b.y, b.radius||4,0,Math.PI*2); ctx.fill();
+  }
+
+  // draw orbs
+  for(const o of orbs){
+    ctx.beginPath();
+    ctx.fillStyle = '#3b82f6';
+    ctx.arc(o.x, o.y, o.r,0,Math.PI*2); ctx.fill();
+  }
+
+  // draw minions
+  for(const m of minions){
+    ctx.save();
+    ctx.translate(m.x,m.y);
+    if(m.type === 'square'){
+      ctx.fillStyle = '#1f6fb3';
+      ctx.fillRect(-6,-6,12,12);
+    } else {
+      ctx.fillStyle = '#5fb0ff';
+      ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // draw player
+  ctx.beginPath();
+  ctx.fillStyle = '#0b66ff';
+  ctx.arc(player.x, player.y, 10, 0, Math.PI*2); ctx.fill();
+  // player outline
+  ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(11,102,255,0.14)'; ctx.stroke();
+
+  // effects
+  for(const ef of effects){
+    if(ef.type === 'hit'){
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(255,180,180,0.6)';
+      ctx.arc(ef.x,ef.y, 6*(ef.life/400),0,Math.PI*2); ctx.fill();
+    } else if(ef.type === 'zap'){
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(180,220,255,0.6)';
+      ctx.arc(ef.x,ef.y, 8*(ef.life/400),0,Math.PI*2); ctx.fill();
+    } else if(ef.type === 'playerhit'){
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(255,220,180,0.6)';
+      ctx.arc(ef.x,ef.y, 12*(ef.life/400),0,Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+/* ---------------- Game loop ---------------- */
+function tick(){
+  const t = performance.now();
+  const dt = t - lastTime;
+  lastTime = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ---------------- Helper: spawn initial enemies for current wave start ---------------- */
+(function startWaveFlow(){
+  // ensure spawnQueue processed from prepareWave already; prepareWave called earlier for wave1
+  setInterval(()=> {
+    // ensure spawnQueue is checked (wave spawn is handled in updateWaveSpawning)
+  }, 500);
+})();
+
+/* ---------------- Small customization helpers for quick editing ---------------- */
+// Allow switching weapon via number keys 1-7
+window.addEventListener('keydown', e=>{
+  if(e.key >= '1' && e.key <= '9'){
+    const owned = Object.keys(player.ownedWeapons);
+    const idx = parseInt(e.key)-1;
+    if(owned[idx]) player.currentWeaponId = owned[idx];
+  }
+  // cheat spawn next wave: N
+  if(e.key.toLowerCase() === 'n') prepareWave(wave+1);
+});
+
+// Basic click to choose weapon for testing in UI (not required)
+canvas.addEventListener('dblclick', ()=> {
+  // give a new random weapon for fun
+  const all = Object.keys(WEAPON_TEMPLATES);
+  const pick = choose(all);
+  player.ownedWeapons[pick] = createWeaponInstance(pick);
+  player.currentWeaponId = pick;
+});
+
+</script>
+</body>
+</html>
