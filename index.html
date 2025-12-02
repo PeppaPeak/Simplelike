@@ -138,6 +138,45 @@ const ENEMIES = {
   pentadecagon:{shape:'pentadecagon', hp:8, speed:22, color:'#ff9ad1', immune:{}, xp:4, ranged:true, damage:3, rate:0.6}
 };
 
+function spawnEnemy(type) {
+    const data = ENEMY_TYPES[type];
+    if (!data) {
+        console.error("Unknown enemy:", type);
+        return;
+    }
+
+    // spawn around edges of map
+    const edge = Math.floor(Math.random() * 4);
+    let x, y;
+
+    switch (edge) {
+        case 0: x = -50; y = Math.random() * canvas.height; break;
+        case 1: x = canvas.width + 50; y = Math.random() * canvas.height; break;
+        case 2: x = Math.random() * canvas.width; y = -50; break;
+        case 3: x = Math.random() * canvas.width; y = canvas.height + 50; break;
+    }
+
+    const enemy = {
+        x,
+        y,
+        type,
+        hp: data.hp,
+        maxHp: data.hp,
+        speed: data.speed,
+        color: data.color,
+        sides: data.sides,
+        immunities: data.immunities,
+        ranged: data.ranged || false,
+        shotCooldown: data.shotCooldown || 0,
+        shotTimer: 0,
+        vx: 0,
+        vy: 0
+    };
+
+    enemies.push(enemy);
+}
+
+
 /* ---------------- Waves: first 10 preset, then random ----------------
    Each wave is an array of enemy 'templateName' strings or special objects
 */
