@@ -138,45 +138,6 @@ const ENEMIES = {
   pentadecagon:{shape:'pentadecagon', hp:8, speed:22, color:'#ff9ad1', immune:{}, xp:4, ranged:true, damage:3, rate:0.6}
 };
 
-function spawnEnemy(type) {
-    const data = ENEMY_TYPES[type];
-    if (!data) {
-        console.error("Unknown enemy:", type);
-        return;
-    }
-
-    // spawn around edges of map
-    const edge = Math.floor(Math.random() * 4);
-    let x, y;
-
-    switch (edge) {
-        case 0: x = -50; y = Math.random() * canvas.height; break;
-        case 1: x = canvas.width + 50; y = Math.random() * canvas.height; break;
-        case 2: x = Math.random() * canvas.width; y = -50; break;
-        case 3: x = Math.random() * canvas.width; y = canvas.height + 50; break;
-    }
-
-    const enemy = {
-        x,
-        y,
-        type,
-        hp: data.hp,
-        maxHp: data.hp,
-        speed: data.speed,
-        color: data.color,
-        sides: data.sides,
-        immunities: data.immunities,
-        ranged: data.ranged || false,
-        shotCooldown: data.shotCooldown || 0,
-        shotTimer: 0,
-        vx: 0,
-        vy: 0
-    };
-
-    enemies.push(enemy);
-}
-
-
 /* ---------------- Waves: first 10 preset, then random ----------------
    Each wave is an array of enemy 'templateName' strings or special objects
 */
@@ -273,33 +234,70 @@ window.addEventListener('keydown', e=> { keys[e.key.toLowerCase()] = true; if(e.
 window.addEventListener('keyup', e=> { keys[e.key.toLowerCase()] = false; });
 
 /* ---------------- Spawn helpers ---------------- */
-function spawnEnemyByName(name, extra){
+function spawnEnemyByName(name, extra = {}) {
   const template = ENEMIES[name] || ENEMIES.circle;
-  // spawn around edges
-  const side = Math.floor(Math.random()*4);
-  let x,y;
-  if(side===0){ x = -30; y = rand(30, canvas.height-30);}
-  else if(side===1){ x = canvas.width+30; y = rand(30, canvas.height-30);}
-  else if(side===2){ y = -30; x = rand(30, canvas.width-30);}
-  else { y = canvas.height+30; x = rand(30, canvas.width-30);}
+
+  // --- spawn around edges ---
+  const side = Math.floor(Math.random() * 4);
+  let x, y;
+  if (side === 0) { x = -30; y = rand(30, canvas.height - 30); }
+  else if (side === 1) { x = canvas.width + 30; y = rand(30, canvas.height - 30); }
+  else if (side === 2) { y = -30; x = rand(30, canvas.width - 30); }
+  else { y = canvas.height + 30; x = rand(30, canvas.width - 30); }
+
+  // --- deep clone immunities to prevent shared state ---
+  const immune = structuredClone(template.immune || {});
+
+  // --- polygon sides for your renderer ---
+  const sidesMap = {
+    circle: 0,
+    square: 4,
+    triangle: 3,
+    pentagon: 5,
+    hexagon: 6,
+    heptagon: 7,
+    octagon: 8,
+    hendecagon: 11,
+    ennea: 91,          // boss (approx since you named it ennea)
+    pentadecagon: 15
+  };
+
+  const sides = sidesMap[template.shape] || 0;
+
   const e = {
-    id: 'e_'+Math.random().toString(36).slice(2),
-    name, templateName: name, shape: template.shape,
-    hp: template.hp, maxHp: template.hp,
-    speed: template.speed, color: template.color,
-    size: 10 + template.hp/5,
-    immune: template.immune || {},
+    id: "e_" + Math.random().toString(36).slice(2),
+    name,
+    templateName: name,
+
+    // appearance & movement
+    shape: template.shape,
+    sides: sides,
+    x,
+    y,
+    hp: template.hp,
+    maxHp: template.hp,
+    speed: template.speed,
+    color: template.color,
+    size: extra.size || 14,  // consistent size for all enemies
+
+    // combat
+    immune,
     xp: template.xp || 1,
+
+    // ranged enemy behavior (pentadecagon)
     ranged: template.ranged || false,
     damage: template.damage || 1,
     rate: template.rate || 0.8,
     lastShot: 0,
-    // behaviors
-    aiKeepDist: !!template.ranged, // pentadecagon keeps distance and shoots
+    aiKeepDist: !!template.ranged,
+
     target: null
   };
+
   enemies.push(e);
+  return e;   // 🔥 FIXED: return for wave logic & debugging
 }
+
 
 /* ---------------- Wave system ---------------- */
 function prepareWave(n){
